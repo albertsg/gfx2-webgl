@@ -1,0 +1,688 @@
+<html>
+
+<head>
+<title>WebGL - Grup 10</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<!-- Llibreria amb operacions amb vectors i matrius -->
+<script type="text/javascript" src="gl-matrix-min.js"></script>
+
+<!-- Llibreria que facilita la creació del context WebGL -->
+<script type="text/javascript" src="webgl-utils.js"></script>
+
+<!-- Llibreria per importar objectes 3d - http://k3d.ivank.net -->
+<script type="text/javascript" src="K3D.js"></script>
+
+
+<!-- Shaders --> 
+
+<script id="shader-fs" type="x-shader/x-fragment">
+    precision mediump float;
+	
+	uniform float uLightIntensity;
+	uniform vec3 uLightPos;
+	uniform vec3 uAmbient;
+	uniform vec3 uDiffuse;
+	uniform vec3 uSpecular;
+	uniform float uSpecularExp;
+    uniform sampler2D uSamplerDiff;	
+	
+	varying vec3 vNormal;
+	varying vec3 vPosition;
+	varying vec2 vTextureCoord;
+
+    void main(void) {
+
+		const float PI = 3.14159265358979323846264;
+	
+		vec3 light = uLightPos - vPosition;
+		float distance = length(light);
+		light = normalize(light);
+		
+		vec3 normal = normalize(vNormal);
+		vec3 view = normalize(-vPosition);
+		vec3 halfV = normalize(view+light);
+			
+		float NL = max(0.0, dot(normal, light));
+		float NH = max(0.0, dot(normal, halfV));
+		float NHexp = pow(NH, uSpecularExp);
+				
+		float attenuation = 1.0 / ( 4.0 * PI * distance );
+		float lightI = uLightIntensity * attenuation;
+		
+		vec3 diffColor = texture2D(uSamplerDiff, vTextureCoord).rgb;
+		
+		vec3 color = (uAmbient + uDiffuse * NL * lightI) * diffColor + uSpecular * NHexp * lightI;
+		
+		gl_FragColor = vec4(color, 1.0);
+    }
+</script>
+
+<script id="shader-vs" type="x-shader/x-vertex">
+    attribute vec3 aVertexPosition;
+	attribute vec3 aVertexNormal;
+    attribute vec2 aTextureCoord;
+	
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+	uniform mat3 uNMatrix;
+	
+	varying vec3 vPosition;
+	varying vec3 vNormal;
+	varying vec2 vTextureCoord;
+
+    void main(void) {
+	
+		vNormal = uNMatrix * aVertexNormal;
+		vPosition = vec3(uMVMatrix * vec4(aVertexPosition, 1.0));
+		
+        vTextureCoord = aTextureCoord;
+		
+        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+    }
+</script>
+
+<!-- Codi WebGL -->
+
+<script type="text/javascript">
+
+    var gl;
+
+	// Incialitza el context WebGL
+    function initGL(canvas) {
+        try {
+			gl = WebGLUtils.setupWebGL(canvas);
+        } catch (e) {
+        }
+        if (!gl) {
+            alert("Could not initialise WebGL, sorry :-(");
+        }
+    }
+
+	// Crea i compila un objecte del tipus shader
+    function getShader(gl, id) {
+        var shaderScript = document.getElementById(id);
+        if (!shaderScript) {
+            return null;
+        }
+
+        var str = "";
+        var k = shaderScript.firstChild;
+        while (k) {
+            if (k.nodeType == 3) {
+                str += k.textContent;
+            }
+            k = k.nextSibling;
+        }
+
+        var shader;
+        if (shaderScript.type == "x-shader/x-fragment") {
+            shader = gl.createShader(gl.FRAGMENT_SHADER);
+        } else if (shaderScript.type == "x-shader/x-vertex") {
+            shader = gl.createShader(gl.VERTEX_SHADER);
+        } else {
+            return null;
+        }
+
+        gl.shaderSource(shader, str);
+        gl.compileShader(shader);
+
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            alert(gl.getShaderInfoLog(shader));
+            return null;
+        }
+
+        return shader;
+    }
+	
+	// Inicitalitza shaders
+	
+	function createProgram(fragmentShaderID, vertexShaderID)
+	{
+		var fragmentShader = getShader(gl, fragmentShaderID);
+        var vertexShader = getShader(gl, vertexShaderID);
+
+		var shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+            alert("Could not initialise shaders" + fragmentShaderID + " " + vertexShaderID);
+        }		
+		
+		return shaderProgram;
+	}
+
+	var shaderProgram;
+
+	// Crea un programa a partir dels shader
+    function initShaders() {
+
+		shaderProgram = createProgram("shader-fs", "shader-vs");
+
+        shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+        gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+        shaderProgram.vertexNormalAttribute = gl.getAttribLocation(shaderProgram, "aVertexNormal");
+        gl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+        shaderProgram.textureCoordAttribute = gl.getAttribLocation(shaderProgram, "aTextureCoord");
+        gl.enableVertexAttribArray(shaderProgram.textureCoordAttribute);	
+        shaderProgram.pMatrixUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
+        shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+        shaderProgram.nMatrixUniform = gl.getUniformLocation(shaderProgram, "uNMatrix");
+        shaderProgram.intensityUniform = gl.getUniformLocation(shaderProgram, "uLightIntensity");
+        shaderProgram.lightPosUniform = gl.getUniformLocation(shaderProgram, "uLightPos");
+        shaderProgram.ambientUniform = gl.getUniformLocation(shaderProgram, "uAmbient");
+        shaderProgram.diffuseUniform = gl.getUniformLocation(shaderProgram, "uDiffuse");
+        shaderProgram.specularUniform = gl.getUniformLocation(shaderProgram, "uSpecular");
+        shaderProgram.specularExpUniform = gl.getUniformLocation(shaderProgram, "uSpecularExp");
+        shaderProgram.samplerDiffUniform = gl.getUniformLocation(shaderProgram, "uSamplerDiff");
+		
+	}
+
+	// Funcions per controlar la posició i rotació dels objectes de l'escena
+	
+    function degToRad(degrees) {
+        return degrees * Math.PI / 180;
+    }
+
+    var yRot = 0;
+    var ySpeed = -3;
+
+    var xRot = 0;
+    var movTie = 3;
+    var zTie = -10;
+    var zSpeed = 3;
+
+    var yRot2 = -180;
+    var xRot2 = -90;
+
+    var movPlaneta = -100;
+    var lateral = 0;
+    var horizontal = 0;
+    var left = 1;
+    var right = 1;
+
+    var z = -5.0;
+
+    var rotNau = -90;
+
+    var currentlyPressedKeys = {};
+
+	// Callback de tecla premuda
+    function handleKeyDown(event) {
+        currentlyPressedKeys[event.keyCode] = true;
+    }
+
+	// Callback de tecla desapretada
+    function handleKeyUp(event) {
+        currentlyPressedKeys[event.keyCode] = false;
+    }
+
+	// Funció que gestiona els events d'entrada d'usuari 
+    function handleKeys() {
+        if (currentlyPressedKeys[33]) {
+            // Page Up
+            z -= 0.05;
+        }
+        if (currentlyPressedKeys[34]) {
+            // Page Down
+            z += 0.05;
+        }
+        if (currentlyPressedKeys[37]) {
+            // Left cursor key
+            lateral -=0.1;
+            right = 0;
+            left = 1;
+            //ySpeed -= 1;
+        }
+        if (currentlyPressedKeys[39]) {
+            // Right cursor key
+            //ySpeed += 1;
+            lateral +=0.1;
+            right = 1;
+            left = 0;
+        
+        }
+
+        if (currentlyPressedKeys[38]) {
+            // Abajo
+            movPlaneta += 0.1;
+        }
+
+
+        if (currentlyPressedKeys[40]) {
+            // Arriba
+            movPlaneta -= 0.1;
+        }
+
+        if (currentlyPressedKeys[87]) {
+            // W
+           horizontal += 0.1;
+        }
+
+        if (currentlyPressedKeys[83]) {
+            // S
+            horizontal -= 0.1;
+        }
+
+        if (currentlyPressedKeys[65]) {
+            // A
+            lateral -= 0.1;
+        }
+
+        if (currentlyPressedKeys[68]) {
+            // D
+            lateral += 0.1;
+        }
+
+
+    }
+
+ 	// Funcions per carregar la tetera als vertex buffer objects
+	
+    var ubotVertexPositionBuffer;
+    var ubotVertexNormalBuffer;
+    var ubotVertexTextureCoordBuffer;
+
+    function handleLoadedUBot(ubotData) {
+	
+		var model = K3D.parse.fromOBJ(ubotData);
+	
+		var normals = K3D.edit.unwrap(model.i_norms , model.c_norms , 3);
+        ubotVertexNormalBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, ubotVertexNormalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+        ubotVertexNormalBuffer.itemSize = 3;
+        ubotVertexNormalBuffer.numItems = normals.length / 3;
+
+		var vertices = K3D.edit.unwrap(model.i_verts, model.c_verts, 3);
+        ubotVertexPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, ubotVertexPositionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+        ubotVertexPositionBuffer.itemSize = 3;
+        ubotVertexPositionBuffer.numItems = vertices.length / 3;
+
+		var uvs = K3D.edit.unwrap(model.i_uvt, model.c_uvt, 2);
+        ubotVertexTextureCoordBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, ubotVertexTextureCoordBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uvs), gl.STATIC_DRAW);
+        ubotVertexTextureCoordBuffer.itemSize = 2;
+        ubotVertexTextureCoordBuffer.numItems = uvs.length / 2;
+		
+    }	
+
+
+    var planetVertexPositionBuffer;
+    var planetVertexNormalBuffer;
+    var planetVertexTextureCoordBuffer;
+
+    function handleLoadedPlanet(planetData) {
+    
+        var model = K3D.parse.fromOBJ(planetData);
+    
+        var normals = K3D.edit.unwrap(model.i_norms , model.c_norms , 3);
+        planetVertexNormalBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, planetVertexNormalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+        planetVertexNormalBuffer.itemSize = 3;
+        planetVertexNormalBuffer.numItems = normals.length / 3;
+
+        var vertices = K3D.edit.unwrap(model.i_verts, model.c_verts, 3);
+        planetVertexPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, planetVertexPositionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+        planetVertexPositionBuffer.itemSize = 3;
+        planetVertexPositionBuffer.numItems = vertices.length / 3;
+
+        var uvs = K3D.edit.unwrap(model.i_uvt, model.c_uvt, 2);
+        planetVertexTextureCoordBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, planetVertexTextureCoordBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uvs), gl.STATIC_DRAW);
+        planetVertexTextureCoordBuffer.itemSize = 2;
+        planetVertexTextureCoordBuffer.numItems = uvs.length / 2;
+    }       
+
+    var tieVertexPositionBuffer;
+    var tieVertexNormalBuffer;
+    var tieVertexTextureCoordBuffer;
+
+    function handleLoadedTie(tieData) {
+    
+        var model = K3D.parse.fromOBJ(tieData);
+    
+        var normals = K3D.edit.unwrap(model.i_norms , model.c_norms , 3);
+        tieVertexNormalBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, tieVertexNormalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+        tieVertexNormalBuffer.itemSize = 3;
+        tieVertexNormalBuffer.numItems = normals.length / 3;
+
+        var vertices = K3D.edit.unwrap(model.i_verts, model.c_verts, 3);
+        tieVertexPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, tieVertexPositionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+        tieVertexPositionBuffer.itemSize = 3;
+        tieVertexPositionBuffer.numItems = vertices.length / 3;
+
+        var uvs = K3D.edit.unwrap(model.i_uvt, model.c_uvt, 2);
+        tieVertexTextureCoordBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, tieVertexTextureCoordBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uvs), gl.STATIC_DRAW);
+        tieVertexTextureCoordBuffer.itemSize = 2;
+        tieVertexTextureCoordBuffer.numItems = uvs.length / 2;
+    }  
+
+	function loadModel() {
+		//K3D.load("xwing.obj", handleLoadedUBot);
+        K3D.load("Creature.obj", handleLoadedUBot);
+        K3D.load("sith.obj", handleLoadedTie);
+        //K3D.load("tiefighter.obj", handleLoadedTie);
+        K3D.load("planet.obj", handleLoadedPlanet);
+        //K3D.load("UBot-OBJ.obj", handleLoadedUBot);
+	}		
+		
+	// Funcions de càrrega de textures
+		
+	// Funció que es crida un cop s'ha carregat la imatge
+	// Omple un objecte textura amb les dades de la imatge carregada
+    function handleLoadedTexture(texture) {
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+		
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
+				      gl.UNSIGNED_BYTE, texture.image);
+					  
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		
+        gl.bindTexture(gl.TEXTURE_2D, null);
+    }
+
+    var ubotDiffTexture;
+
+    var planetDiffTexture;
+
+    var tieDiffTexture;
+
+	// Crea un objete textura i solicita la càrrega de la imatge que contindrà
+    function initTextures() {
+	
+        ubotDiffTexture = gl.createTexture();
+		
+        ubotDiffTexture.image = new Image();
+        ubotDiffTexture.image.onload = function () {
+            handleLoadedTexture(ubotDiffTexture)
+        }
+        ubotDiffTexture.image.src = "texcreat.png";   
+        //ubotDiffTexture.image.src = "xwing-diff.png";	
+
+
+        planetDiffTexture = gl.createTexture();
+        
+        planetDiffTexture.image = new Image();
+        planetDiffTexture.image.onload = function () {
+            handleLoadedTexture(planetDiffTexture)
+        }
+        planetDiffTexture.image.src = "UBot-Diff.png";	
+
+        tieDiffTexture = gl.createTexture();
+        
+        tieDiffTexture.image = new Image();
+        tieDiffTexture.image.onload = function () {
+            handleLoadedTexture(tieDiffTexture)
+        }
+        tieDiffTexture.image.src = "sith.png";  
+    }
+	
+	
+	// Funcions de pintar
+	
+	function drawModel(modelview, projection) {
+	
+		gl.useProgram(shaderProgram);
+	
+		gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, projection);
+		gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, modelview);
+		
+		// Matriu modelview de normals
+		var normalMatrix = mat3.create();
+		mat3.fromMat4(normalMatrix, modelview);
+		mat3.invert(normalMatrix, normalMatrix);
+		mat3.transpose(normalMatrix, normalMatrix);
+		gl.uniformMatrix3fv(shaderProgram.nMatrixUniform, false, normalMatrix);
+
+		// Especifica paràmetres de materials i il·luminació
+		gl.uniform1f(shaderProgram.intensityUniform, 100.0); //HEREEE
+		gl.uniform3f(shaderProgram.lightPosUniform, 5.0, 2.0, -2.0);
+		gl.uniform3f(shaderProgram.ambientUniform, 0.1, 0.1, 0.1);
+		gl.uniform3f(shaderProgram.diffuseUniform, 1.0, 1.0, 1.0);
+		gl.uniform3f(shaderProgram.specularUniform, 1.0, 1.0, 1.0);
+		gl.uniform1f(shaderProgram.specularExpUniform, 50.0);
+		
+		gl.bindBuffer(gl.ARRAY_BUFFER, ubotVertexPositionBuffer);
+		gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, ubotVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+		
+		gl.bindBuffer(gl.ARRAY_BUFFER, ubotVertexNormalBuffer);
+		gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, ubotVertexNormalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+		
+		gl.bindBuffer(gl.ARRAY_BUFFER, ubotVertexTextureCoordBuffer);
+		gl.vertexAttribPointer(shaderProgram.textureCoordAttribute, ubotVertexTextureCoordBuffer.itemSize, gl.FLOAT, false, 0, 0);		
+		
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, ubotDiffTexture);
+        gl.uniform1i(shaderProgram.samplerDiffUniform, 0);
+
+		gl.drawArrays(gl.TRIANGLES, 0, ubotVertexPositionBuffer.numItems);
+	}
+
+    function drawPlanet(modelview, projection) {
+    
+        gl.useProgram(shaderProgram);
+    
+        gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, projection);
+        gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, modelview);
+        
+        // Matriu modelview de normals
+        var normalMatrix = mat3.create();
+        mat3.fromMat4(normalMatrix, modelview);
+        mat3.invert(normalMatrix, normalMatrix);
+        mat3.transpose(normalMatrix, normalMatrix);
+        gl.uniformMatrix3fv(shaderProgram.nMatrixUniform, false, normalMatrix);
+
+        // Especifica paràmetres de materials i il·luminació
+        gl.uniform1f(shaderProgram.intensityUniform, 400.0);
+        gl.uniform3f(shaderProgram.lightPosUniform, 5.0, 2.0, -2.0);
+        gl.uniform3f(shaderProgram.ambientUniform, 0.1, 0.1, 0.1);
+        gl.uniform3f(shaderProgram.diffuseUniform, 1.0, 1.0, 1.0);
+        gl.uniform3f(shaderProgram.specularUniform, 1.0, 1.0, 1.0);
+        gl.uniform1f(shaderProgram.specularExpUniform, 20.0);
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, planetVertexPositionBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, planetVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, planetVertexNormalBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, planetVertexNormalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, planetVertexTextureCoordBuffer);
+        gl.vertexAttribPointer(shaderProgram.textureCoordAttribute, planetVertexTextureCoordBuffer.itemSize, gl.FLOAT, false, 0, 0);      
+        
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, planetDiffTexture);
+        gl.uniform1i(shaderProgram.samplerDiffUniform, 0);
+
+        gl.drawArrays(gl.TRIANGLES, 0, planetVertexPositionBuffer.numItems);
+    }
+	
+    function drawTie(modelview, projection) {
+    
+        gl.useProgram(shaderProgram);
+    
+        gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, projection);
+        gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, modelview);
+        
+        // Matriu modelview de normals
+        var normalMatrix = mat3.create();
+        mat3.fromMat4(normalMatrix, modelview);
+        mat3.invert(normalMatrix, normalMatrix);
+        mat3.transpose(normalMatrix, normalMatrix);
+        gl.uniformMatrix3fv(shaderProgram.nMatrixUniform, false, normalMatrix);
+
+        // Especifica paràmetres de materials i il·luminació
+        gl.uniform1f(shaderProgram.intensityUniform, 200.0);
+        gl.uniform3f(shaderProgram.lightPosUniform, 5.0, 2.0, -2.0);
+        gl.uniform3f(shaderProgram.ambientUniform, 0.1, 0.1, 0.1);
+        gl.uniform3f(shaderProgram.diffuseUniform, 1.0, 1.0, 1.0);
+        gl.uniform3f(shaderProgram.specularUniform, 1.0, 1.0, 1.0);
+        gl.uniform1f(shaderProgram.specularExpUniform, 50.0);
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, tieVertexPositionBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, tieVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, tieVertexNormalBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, tieVertexNormalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, tieVertexTextureCoordBuffer);
+        gl.vertexAttribPointer(shaderProgram.textureCoordAttribute, tieVertexTextureCoordBuffer.itemSize, gl.FLOAT, false, 0, 0);      
+        
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, tieDiffTexture);
+        gl.uniform1i(shaderProgram.samplerDiffUniform, 0);
+
+        gl.drawArrays(gl.TRIANGLES, 0, tieVertexPositionBuffer.numItems);
+    }
+    function drawScene() {
+        gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+       if (ubotVertexPositionBuffer != null && ubotVertexNormalBuffer != null && ubotVertexTextureCoordBuffer != null) {
+	   
+			// Matriu de projecció
+			var pMatrix = mat4.create();
+			var aspect = canvas.clientWidth / canvas.clientHeight;
+			mat4.perspective(pMatrix, 45, aspect, 0.1, 100.0);
+			
+			// Matriu modelview Xwing
+			var mvMatrix = mat4.create();
+			mat4.identity(mvMatrix);
+			mat4.translate(mvMatrix, mvMatrix, [lateral, horizontal, -5]);
+			mat4.scale(mvMatrix, mvMatrix, [0.02, 0.02, 0.02]);
+            mat4.rotate(mvMatrix, mvMatrix, degToRad(rotNau), [1, 0, 0]);
+			mat4.rotate(mvMatrix, mvMatrix, degToRad(yRot), [0, 0, 1]);
+			
+			drawModel(mvMatrix, pMatrix);
+
+            // Matriu modelview planet
+            var mvMatrix2 = mat4.create();
+            mat4.identity(mvMatrix2);
+            mat4.translate(mvMatrix2, mvMatrix2, [0.0, 0.0, movPlaneta]);
+            mat4.scale(mvMatrix2, mvMatrix2, [0.2, 0.2, 0.2]);
+            mat4.rotate(mvMatrix2, mvMatrix2, degToRad(xRot), [1, 0, 0]);
+
+            drawPlanet(mvMatrix2, pMatrix);
+
+
+            // Matriu modelview Tie
+            var mvMatrix3 = mat4.create();
+            
+            mat4.identity(mvMatrix3);
+            mat4.translate(mvMatrix3, mvMatrix3, [-lateral, -horizontal, zTie]);
+            mat4.scale(mvMatrix3, mvMatrix3, [5, 5, 5]);
+            mat4.rotate(mvMatrix3, mvMatrix3, degToRad(yRot2), [0, 1, 0]); //Y
+            mat4.rotate(mvMatrix3, mvMatrix3, degToRad(xRot2), [1, 0, 0]); //X
+            //mat4.rotate(mvMatrix3, mvMatrix3, degToRad(yRot), [0, 0, 1]);
+            
+            drawTie(mvMatrix3, pMatrix);
+
+        
+		}				
+    }
+
+    var lastTime = 0;
+
+	// Modifica l'estat de la rotació
+    function animate() {
+        var timeNow = new Date().getTime();
+        if (lastTime != 0) {
+            var elapsed = timeNow - lastTime;
+            xRot -= (ySpeed * elapsed) / 800.0;
+
+            //zTie -= (zSpeed * elapsed) / 100.0; 
+
+            zTie = zTie - 0.03;
+
+            if(left == 1){
+                yRot -= (ySpeed * elapsed) / 10.0;
+            }
+            if(right == 1){
+                yRot += (ySpeed * elapsed) / 10.0;
+            }
+            
+
+            if(yRot > 30.0){
+                yRot = 30.0;
+            }
+            else if(yRot < -30.0){
+                yRot = -30.0;
+            }
+        }
+        lastTime = timeNow;
+    }
+
+     function resize_canvas(){
+        canvas = document.getElementById("webgl-canvas");
+        if (canvas.width  < window.innerWidth)
+        {
+            canvas.width  = window.innerWidth - 20;
+        }
+
+        if (canvas.height < window.innerHeight)
+        {
+            canvas.height = window.innerHeight - 20;
+        }
+    }
+
+	// Bucle principal que es crida amb un framerate constant
+    function tick() {
+        requestAnimFrame(tick);
+        handleKeys();
+        drawScene();
+        animate();
+    }
+	
+	var canvas;
+
+	// Funció d'inicialització
+    function webGLStart() {
+        canvas = document.getElementById("webgl-canvas");
+        initGL(canvas);
+        initShaders();
+        initTextures();		
+ 		loadModel();
+
+        //gl.clearColor(0.5, 0.8, 0.9, 1.0);
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.enable(gl.DEPTH_TEST);
+
+        resize_canvas();
+        document.onkeydown = handleKeyDown;
+        document.onkeyup = handleKeyUp;
+
+        tick();
+    }
+
+</script>
+
+</head>
+
+<!-- HTML de la pàgina -->
+
+<body onload="webGLStart();">
+
+    <canvas id="webgl-canvas" style="border: none;" width="800" height="500"></canvas>
+
+</body>
+
+</html>
